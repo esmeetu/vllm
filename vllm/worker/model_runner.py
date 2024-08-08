@@ -1094,10 +1094,11 @@ class GPUModelRunnerBase(ModelRunnerBase[TModelInputForGPU]):
                                 self.parallel_config))
                         num_kv_heads = self.model_config.get_num_kv_heads(
                             self.parallel_config)
-                        if num_qo_heads // num_kv_heads >= 4:
-                            use_tensor_cores = True
-                        else:
-                            use_tensor_cores = False
+                        # if num_qo_heads // num_kv_heads >= 4:
+                        #     use_tensor_cores = True
+                        # else:
+                        # use tensor cores will use flashinfer prefill wrapper, which sm_75 does not support
+                        use_tensor_cores = False
                         decode_wrapper = \
                             CUDAGraphBatchDecodeWithPagedKVCacheWrapper(
                             decode_workspace_buffer, _indptr_buffer,

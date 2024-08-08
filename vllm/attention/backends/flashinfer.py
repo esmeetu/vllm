@@ -4,12 +4,18 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional, Set, Tuple, Type
 try:
     from flashinfer import BatchDecodeWithPagedKVCacheWrapper
     from flashinfer.prefill import BatchPrefillWithPagedKVCacheWrapper
-    from vllm_flash_attn import flash_attn_varlen_func
+    # from vllm_flash_attn import flash_attn_varlen_func
 except ImportError:
-    flash_attn_varlen_func = None
+    # flash_attn_varlen_func = None
     BatchDecodeWithPagedKVCacheWrapper = None
     BatchPrefillWithPagedKVCacheWrapper = None
 
+# from flash_attn import flash_attn_varlen_func
+from xformers import ops as xops
+from xformers.ops.fmha.attn_bias import (AttentionBias,
+                                         BlockDiagonalCausalMask,
+                                         BlockDiagonalMask,
+                                         LowerTriangularMaskWithTensorBias)
 import torch
 
 from vllm import _custom_ops as ops
@@ -81,6 +87,9 @@ class FlashInferMetadata(AttentionMetadata):
     # requests only.
     max_prefill_seq_len: int
 
+    # (batch_size,). The prompt length per sequence. None if it is a decoding.
+    seq_lens: Optional[List[int]] = None
+
     use_cuda_graph: bool = True
 
     prefill_wrapper: Optional[BatchPrefillWithPagedKVCacheWrapper] = None
@@ -130,57 +139,57 @@ class FlashInferMetadata(AttentionMetadata):
         self.is_profile_run = is_block_tables_empty(self.block_tables)
 
     def begin_forward(self):
-        if self.num_prefill_tokens > 0:
-            if self.paged_kv_indices is None:
-                return
+        # if self.num_prefill_tokens > 0:
+        #     if self.paged_kv_indices is None:
+        #         return
 
-            assert self.prefill_wrapper is not None
-            assert self.query_start_loc is not None
+        #     assert self.prefill_wrapper is not None
+        #     assert self.query_start_loc is not None
+        #     assert self.paged_kv_indices is not None
+        #     assert self.paged_kv_indptr is not None
+        #     assert self.paged_kv_last_page_len is not None
+        #     batch_size = self.query_start_loc.shape[0] - 1
+        #     assert batch_size >= 0
+        #     # The profile run does not read kv cache.
+        #     # Both paged_kv_indices and paged_kv_last_page_len are empty.
+        #     # paged_kv_indptr is a zero tensor with size batch_size + 1.
+        #     if self.is_profile_run:
+        #         self.paged_kv_indptr = torch.zeros(batch_size + 1,
+        #                                            device=self.device)
+        #     else:
+        #         self.paged_kv_indptr = self.paged_kv_indptr.to(self.device)
+        #     self.paged_kv_last_page_len = self.paged_kv_last_page_len.to(
+        #         self.device)
+        #     self.paged_kv_indices = self.paged_kv_indices.to(self.device)
+        #     self.prefill_wrapper.end_forward()
+        #     self.prefill_wrapper.begin_forward(
+        #         self.query_start_loc, self.paged_kv_indptr,
+        #         self.paged_kv_indices, self.paged_kv_last_page_len,
+        #         self.num_qo_heads, self.num_kv_heads, self.head_dim,
+        #         self.page_size)
+        # else:
+        if not self.use_cuda_graph:
             assert self.paged_kv_indices is not None
             assert self.paged_kv_indptr is not None
             assert self.paged_kv_last_page_len is not None
-            batch_size = self.query_start_loc.shape[0] - 1
-            assert batch_size >= 0
-            # The profile run does not read kv cache.
-            # Both paged_kv_indices and paged_kv_last_page_len are empty.
-            # paged_kv_indptr is a zero tensor with size batch_size + 1.
-            if self.is_profile_run:
-                self.paged_kv_indptr = torch.zeros(batch_size + 1,
-                                                   device=self.device)
-            else:
-                self.paged_kv_indptr = self.paged_kv_indptr.to(self.device)
+            self.paged_kv_indices = self.paged_kv_indices.to(self.device)
+            self.paged_kv_indptr = self.paged_kv_indptr.to(self.device)
             self.paged_kv_last_page_len = self.paged_kv_last_page_len.to(
                 self.device)
-            self.paged_kv_indices = self.paged_kv_indices.to(self.device)
-            self.prefill_wrapper.end_forward()
-            self.prefill_wrapper.begin_forward(
-                self.query_start_loc, self.paged_kv_indptr,
-                self.paged_kv_indices, self.paged_kv_last_page_len,
-                self.num_qo_heads, self.num_kv_heads, self.head_dim,
-                self.page_size)
-        else:
-            if not self.use_cuda_graph:
-                assert self.paged_kv_indices is not None
-                assert self.paged_kv_indptr is not None
-                assert self.paged_kv_last_page_len is not None
-                self.paged_kv_indices = self.paged_kv_indices.to(self.device)
-                self.paged_kv_indptr = self.paged_kv_indptr.to(self.device)
-                self.paged_kv_last_page_len = self.paged_kv_last_page_len.to(
-                    self.device)
 
-            assert self.decode_wrapper is not None
-            self.decode_wrapper.end_forward()
-            self.decode_wrapper.begin_forward(
-                self.paged_kv_indptr,
-                self.paged_kv_indices,
-                self.paged_kv_last_page_len,
-                self.num_qo_heads,
-                self.num_kv_heads,
-                self.head_dim,
-                self.page_size,
-                # Disable flashinfer's pos encoding and use vllm's rope.
-                pos_encoding_mode="NONE",
-                data_type=self.data_type)
+        assert self.decode_wrapper is not None
+        self.decode_wrapper.end_forward()
+        self.decode_wrapper.begin_forward(
+            self.paged_kv_indptr,
+            self.paged_kv_indices,
+            self.paged_kv_last_page_len,
+            self.num_qo_heads,
+            self.num_kv_heads,
+            self.head_dim,
+            self.page_size,
+            # Disable flashinfer's pos encoding and use vllm's rope.
+            pos_encoding_mode="NONE",
+            data_type=self.data_type)
 
     def asdict_zerocopy(self,
                         skip_fields: Optional[Set[str]] = None
@@ -416,6 +425,7 @@ class FlashInferMetadataBuilder(AttentionMetadataBuilder[FlashInferMetadata]):
         kv_cache_dtype = get_kv_cache_torch_dtype(
             self.runner.kv_cache_dtype, self.runner.model_config.dtype)
         return FlashInferMetadata(
+            seq_lens=seq_lens,
             num_prefills=self.num_prefills,
             slot_mapping=slot_mapping_tensor,
             num_prefill_tokens=self.num_prefill_tokens,
@@ -518,20 +528,9 @@ class FlashInferImpl(AttentionImpl):
             # when kv_cache is not provided.
             # This happens when vllm runs the profiling to
             # determine the number of blocks.
-            if kv_cache is None:
-                output = flash_attn_varlen_func(
-                    q=query,
-                    k=key,
-                    v=value,
-                    cu_seqlens_q=prefill_meta.seq_start_loc,
-                    cu_seqlens_k=prefill_meta.seq_start_loc,
-                    max_seqlen_q=prefill_meta.max_prefill_seq_len,
-                    max_seqlen_k=prefill_meta.max_prefill_seq_len,
-                    softmax_scale=self.scale,
-                    causal=True,
-                    window_size=self.sliding_window,
-                    alibi_slopes=self.alibi_slopes,
-                )
+            if kv_cache is None or prefill_meta.block_tables.numel() == 0:
+                output = self._run_memory_efficient_xformers_forward(
+                    query, key, value, prefill_meta)
             else:
                 assert prefill_meta is not None
                 assert prefill_meta.prefill_wrapper is not None
@@ -549,3 +548,182 @@ class FlashInferImpl(AttentionImpl):
                 sm_scale=self.scale,
                 logits_soft_cap=self.logits_soft_cap)
         return output.view(num_tokens, hidden_size)
+
+    def _run_memory_efficient_xformers_forward(
+        self,
+        query: torch.Tensor,
+        key: torch.Tensor,
+        value: torch.Tensor,
+        attn_metadata: AttentionMetadata,
+        attn_type: AttentionType = AttentionType.DECODER,
+    ) -> torch.Tensor:
+        """Attention for 1D query of multiple prompts. Multiple prompt
+        tokens are flattened in to `query` input.
+
+        See https://facebookresearch.github.io/xformers/components/ops.html
+        for API spec.
+
+        Args:
+            output: shape = [num_prefill_tokens, num_heads, head_size]
+            query: shape = [num_prefill_tokens, num_heads, head_size]
+            key: shape = [num_prefill_tokens, num_kv_heads, head_size]
+            value: shape = [num_prefill_tokens, num_kv_heads, head_size]
+            attn_metadata: Metadata for attention.
+        """
+        
+        original_query = query
+        if self.num_kv_heads != self.num_heads:
+            # GQA/MQA requires the shape [B, M, G, H, K].
+            # Note that the output also has the same shape (which is different
+            # from a spec from the doc).
+            query = query.view(query.shape[0], self.num_kv_heads,
+                               self.num_queries_per_kv, query.shape[-1])
+            key = key[:, :,
+                      None, :].expand(key.shape[0], self.num_kv_heads,
+                                      self.num_queries_per_kv, key.shape[-1])
+            value = value[:, :,
+                          None, :].expand(value.shape[0], self.num_kv_heads,
+                                          self.num_queries_per_kv,
+                                          value.shape[-1])
+        # Set attention bias if not provided. This typically happens at
+        # the very attention layer of every iteration.
+        # FIXME(woosuk): This is a hack.
+        if self.alibi_slopes is None:
+            assert attn_metadata.seq_lens is not None
+
+            # Default decoder self-attention mask is causal
+            attn_bias = BlockDiagonalCausalMask.from_seqlens(
+                attn_metadata.seq_lens)
+            attn_bias = [attn_bias]
+        else:
+            assert attn_metadata.seq_lens is not None
+            attn_bias = _make_alibi_bias(self.alibi_slopes,
+                                            self.num_kv_heads, query.dtype,
+                                            attn_metadata.seq_lens)
+
+        _set_attn_bias(attn_metadata, attn_bias, attn_type)
+
+        # No alibi slopes.
+        # TODO(woosuk): Too many view operations. Let's try to reduce
+        # them in the future for code readability.
+        if self.alibi_slopes is None:
+            # Add the batch dimension.
+            query = query.unsqueeze(0)
+            key = key.unsqueeze(0)
+            value = value.unsqueeze(0)
+            out = xops.memory_efficient_attention_forward(
+                query,
+                key,
+                value,
+                attn_bias=attn_bias[0],
+                p=0.0,
+                scale=self.scale)
+            return out.view_as(original_query)
+
+        # No alibi slopes.
+        # TODO(woosuk): Too many view operations. Let's try to reduce
+        # them in the future for code readability.
+        assert attn_metadata.seq_lens is not None
+        output = torch.empty_like(original_query)
+        start = 0
+        for i, seq_len in enumerate(attn_metadata.seq_lens):
+            end = start + seq_len
+            out = xops.memory_efficient_attention_forward(
+                query[None, start:end],
+                key[None, start:end],
+                value[None, start:end],
+                attn_bias=attn_bias[i],
+                p=0.0,
+                scale=self.scale)
+            # TODO(woosuk): Unnecessary copy. Optimize.
+            output[start:end].copy_(out.view_as(original_query[start:end]))
+            start += seq_len
+        return output
+    
+
+def _get_attn_bias(
+    attn_metadata: FlashInferMetadata,
+    attn_type: AttentionType,
+) -> Optional[AttentionBias]:
+    '''
+    Extract appropriate attention bias from attention metadata
+    according to attention type.
+
+    Arguments:
+
+    * attn_metadata: Attention metadata structure associated with attention
+    * attn_type: encoder attention, decoder self-attention,
+                 encoder/decoder cross-attention
+
+    Returns:
+    * Appropriate attention bias value given the attention type
+    '''
+
+    if attn_type == AttentionType.DECODER:
+        return attn_metadata.attn_bias
+    elif attn_type == AttentionType.ENCODER:
+        return attn_metadata.encoder_attn_bias
+    else:
+        # attn_type == AttentionType.ENCODER_DECODER
+        return attn_metadata.cross_attn_bias
+
+def _set_attn_bias(
+    attn_metadata: FlashInferMetadata,
+    attn_bias: List[Optional[AttentionBias]],
+    attn_type: AttentionType,
+) -> None:
+    '''
+    Update appropriate attention bias field of attention metadata,
+    according to attention type.
+
+    Arguments:
+
+    * attn_metadata: Attention metadata structure associated with attention
+    * attn_bias: The desired attention bias value
+    * attn_type: encoder attention, decoder self-attention,
+                 encoder/decoder cross-attention
+    '''
+
+    if attn_type == AttentionType.DECODER:
+        attn_metadata.attn_bias = attn_bias
+    elif attn_type == AttentionType.ENCODER:
+        attn_metadata.encoder_attn_bias = attn_bias
+    elif attn_type == AttentionType.ENCODER_DECODER:
+        attn_metadata.cross_attn_bias = attn_bias
+    else:
+        raise AttributeError(f"Invalid attention type {str(attn_type)}")
+
+def _make_alibi_bias(
+    alibi_slopes: torch.Tensor,
+    num_kv_heads: int,
+    dtype: torch.dtype,
+    seq_lens: List[int],
+) -> List[AttentionBias]:
+    attn_biases: List[AttentionBias] = []
+    for seq_len in seq_lens:
+        bias = torch.arange(seq_len, dtype=dtype)
+        # NOTE(zhuohan): HF uses
+        #     `bias = bias[None, :].repeat(seq_len, 1)`
+        # here. We find that both biases give the same results, but
+        # the bias below more accurately follows the original ALiBi
+        # paper.
+        # Calculate a matrix where each element represents ith element- jth
+        # element.
+        bias = bias[None, :] - bias[:, None]
+
+        padded_len = (seq_len + 7) // 8 * 8
+        num_heads = alibi_slopes.shape[0]
+        bias = torch.empty(
+            1,  # batch size
+            num_heads,
+            seq_len,
+            padded_len,
+            device=alibi_slopes.device,
+            dtype=dtype,
+        )[:, :, :, :seq_len].copy_(bias)
+        bias.mul_(alibi_slopes[:, None, None])
+        if num_heads != num_kv_heads:
+            bias = bias.unflatten(1, (num_kv_heads, num_heads // num_kv_heads))
+        attn_biases.append(LowerTriangularMaskWithTensorBias(bias))
+
+    return attn_biases
