@@ -1054,6 +1054,43 @@ profiles:
       - Performance figures on the InferenceX dashboard are reported by SemiAnalysis and have not been reproduced for this recipe.
       - Model policy (vLLM as the native engine, `Inferact/Kimi-K3-DSpark` as the agreed draft): [`MODELS.md`](https://github.com/SemiAnalysisAI/InferenceX/blob/6e72cbc11234e624d66b8fc5eaddac50068db15c/inferencex-e2e/docs/MODELS.md).
 
+# Shown below the command builder when `when` matches the selection
+# (hardware / strategy / variant / feature); see SCHEMA.md.
+notes:
+  - title: "Cross-node communication"
+    when: { strategy: [multi_node_tep, multi_node_dep, pd_cluster] }
+    body: |
+      Use `--all2all-backend deepep_v2` for RDMA and `--all2all-backend flashinfer_nvlink_one_sided` for NVLink.
+  - title: "MoE backend"
+    when: { hardware: [gb200, gb300], strategy: [multi_node_dep] }
+    body: |
+      Recommend to use `deep_gemm_mega_moe` for DEP deployments with cross-node NVLink e.g. GB200 and GB300. Note that DeepGEMM MegaMoE is not compatible with cross-node RDMA.
+  - title: "MNNVL environments"
+    when: { hardware: [gb200, gb300] }
+    body: |
+      Recommend adding `NCCL_MNNVL_ENABLE=1`, `NCCL_CUMEM_ENABLE=1`, and `NCCL_NVLS_ENABLE=1`.
+  - title: "Prefix-match unit"
+    when: { hardware: [blackwell] }
+    body: |
+      K3 is a hybrid model: its MLA attention layers and KDA (Mamba-like) layers form two KV-cache groups under the hybrid KV-cache manager. With prefix caching on, vLLM pads the attention block size up to match the Mamba state page, so both groups resolve to one (large) block size and the default prefix-cache hit boundary lands on that block — very coarse. The Blackwell profile sets `--prefix-match-unit 128`: the inflation formula always yields a multiple of 128, so 128 divides whatever block size results, and it aligns with the MLA kernel's native block boundary, giving finer prefix-hit granularity. The value is only effective when prefix caching (or a KV connector) is active; it is a no-op otherwise, and it is safe under all tensor-parallel layouts.
+  - title: "RDMA KV transfer"
+    when: { strategy: [pd_cluster] }
+    body: |
+      If RDMA is enabled, set `UCX_TLS="rc,cuda_copy"` to make sure KV Cache transfer goes through RDMA.
+  - title: "AITER SiTUv2 MoE path (MI355X / MI350X)"
+    when: { hardware: ["arch:gfx950"] }
+    body: |
+      `VLLM_ROCM_USE_AITER_MOE_SITUV2=1` (set above) enables AITER's SiTUv2 a4w4 FlyDSL MoE path on builds that carry vllm-project/vllm#53940 (ROCm nightlies since 2026-09-16). v0.30.0 predates it: there the variable is ignored and the MoE runs the default a16w4 path. Unset it or set `0` for the default a16w4 path. On builds with #53940, `VLLM_ROCM_USE_AITER_MOE_SITUV2_A8W4` is a deprecated alias for the same a4w4 path and vLLM removes `AITER_SITUV2_A8W4` at startup while the toggle is on; on v0.30.0 and older, `VLLM_ROCM_USE_AITER_MOE_SITUV2_A8W4=1` selects the a8w4 path instead. Do not set `AITER_SITUV2_A8W4=1` by itself: vLLM does not derive its MoE weight layout from that AITER flag (vllm-project/vllm#53954 is open), so the two can disagree and corrupt output without an error.
+troubleshooting:
+  - title: "Tool call in a format the parser doesn't expect"
+    when: { feature: [tool_calling] }
+    body: |
+      K3 occasionally emit a tool-call format its own parser doesn't expect. Suggest to run do schema validation and retry.
+  - title: "NCCL error: unhandled system error (mlx5 dmabuf registration)"
+    when: { hardware: [nvidia], strategy: [multi_node_tp, multi_node_tep, multi_node_tp_pp, multi_node_dep, multi_node_tp_dp, pd_cluster] }
+    body: |
+      If engine init fails with "NCCL error: unhandled system error" and the log shows `mlx5dv_reg_dmabuf_mr` errno 524, the kernel/driver lacks mlx5 dmabuf support (NCCL 2.28 registers dmabuf by default). Set `NCCL_DMABUF_ENABLE=0` to fall back to `nvidia_peermem` (must be loaded on the nodes) — still GPUDirect RDMA.
+
 guide: |
   ## Overview
 
@@ -1110,18 +1147,10 @@ guide: |
 
   ## Notes
 
-  - **Cross node communitcation**: Use `--all2all-backend deepep_v2` for RDMA and `--all2all-backend flashinfer_nvlink_one_sided` for NVLink.
-  - **MoE backend**: Recommend to use `deep_gemm_mega_moe` for DEP deployments with cross-node NVLink e.g. GB200 and GB300. Note that DeepGEMM MegaMoE is not compatible with cross-node RDMA.
   - **Rust Frontend**: Selected by default in the command builder. Switch to Python if you encounter unsupported features or compatibility issues.
   - **Model Runner v2**: `VLLM_USE_V2_MODEL_RUNNER=1`: Model Runner v2 fully supports this model and can be enabled if needed.
-  - **Tool calling**: K3 occasionally emit a tool-call format its own parser doesn't expect. Suggest to run do schema validation and retry.
-  - **AMD (MI355X / MI350X, CDNA4 gfx950)**: `VLLM_ROCM_USE_AITER_MOE_SITUV2=1` (set above) enables AITER's SiTUv2 a4w4 FlyDSL MoE path on builds that carry vllm-project/vllm#53940 (ROCm nightlies since 2026-09-16). v0.30.0 predates it: there the variable is ignored and the MoE runs the default a16w4 path. Unset it or set `0` for the default a16w4 path. On builds with #53940, `VLLM_ROCM_USE_AITER_MOE_SITUV2_A8W4` is a deprecated alias for the same a4w4 path and vLLM removes `AITER_SITUV2_A8W4` at startup while the toggle is on; on v0.30.0 and older, `VLLM_ROCM_USE_AITER_MOE_SITUV2_A8W4=1` selects the a8w4 path instead. Do not set `AITER_SITUV2_A8W4=1` by itself: vLLM does not derive its MoE weight layout from that AITER flag (vllm-project/vllm#53954 is open), so the two can disagree and corrupt output without an error.
   - **max-model-len**: Adjust max-model-len for different benchmark scenarios for best performance.
-  - **RDMA**: If RDMA is enabled, set `UCX_TLS="rc,cuda_copy"` to make sure KV Cache transfer goes through RDMA.
-  - **MNNVL environments** (GB200/GB300 NVL): recommend adding `NCCL_MNNVL_ENABLE=1`, `NCCL_CUMEM_ENABLE=1`, and `NCCL_NVLS_ENABLE=1`.
-  - **mlx5 dmabuf registration failures**: if engine init fails with "NCCL error: unhandled system error" and the log shows `mlx5dv_reg_dmabuf_mr` errno 524, the kernel/driver lacks mlx5 dmabuf support (NCCL 2.28 registers dmabuf by default). Set `NCCL_DMABUF_ENABLE=0` to fall back to `nvidia_peermem` (must be loaded on the nodes) — still GPUDirect RDMA.
   - **FP8 KV**: If FP8 KV cache is needed, please also add `--attention-config '{"use_prefill_query_quantization":true,"mla_prefill_backend":"TOKENSPEED_MLA"}'` when serving vLLM. `TOKENSPEED_MLA` is what the Blackwell profile above emits (paired with `--attention-backend TOKENSPEED_MLA` for decode), but it is not the only supported choice: vLLM 0.27.1 registers three MLA prefill backends — `FLASHINFER`, `TRTLLM_RAGGED` and `TOKENSPEED_MLA` (see `vllm/v1/attention/backends/mla/prefill/registry.py`) — and any of them may be substituted for `mla_prefill_backend` alongside `use_prefill_query_quantization`. Which one wins depends on the input-length distribution, so benchmark before switching. Those backends do not run on ROCm: on MI355X the builder pairs FP8 KV with `--attention-config '{"mla_prefill_backend":"ROCM_AITER_FA"}'` instead.
-  - **Prefix-match unit**: K3 is a hybrid model: its MLA attention layers and KDA (Mamba-like) layers form two KV-cache groups under the hybrid KV-cache manager. With prefix caching on, vLLM pads the attention block size up to match the Mamba state page, so both groups resolve to one (large) block size and the default prefix-cache hit boundary lands on that block — very coarse. The Blackwell profile sets `--prefix-match-unit 128`: the inflation formula always yields a multiple of 128, so 128 divides whatever block size results, and it aligns with the MLA kernel's native block boundary, giving finer prefix-hit granularity. The value is only effective when prefix caching (or a KV connector) is active; it is a no-op otherwise, and it is safe under all tensor-parallel layouts.
   - **Decode context parallelism (DCP)**: enable the **Decode context parallelism** opt-in feature in the command builder to shard the decode KV cache across the tensor-parallel ranks for decode-heavy long-context serving. It emits `--decode-context-parallel-size 8 --dcp-comm-backend a2a --attention-backend TOKENSPEED_MLA` with `mla_prefill_backend: TRTLLM_RAGGED` (on MI355X: `--attention-backend ROCM_AITER_MLA` with `mla_prefill_backend: ROCM_AITER_FA`), and is scoped to the TP8 single-node profile because the DCP size must divide the tensor-parallel size. On builds that carry them, the `VLLM_USE_DIRECT_DCP_A2A`, `VLLM_USE_DIRECT_DCP_Q_GATHER` and `VLLM_USE_DIRECT_DCP_KV_GATHER` knobs default to auto and turn the direct DCP ops on where applicable; set them to `1` only to pin that path explicitly, or `0` to disable it. The MI355X DCP option sets all three to `0`, as InferenceX does. On GB200 and GB300 the builder's **Decode context parallel** row (Off, DCP8, DCP16) sets `--decode-context-parallel-size` on every node tab and, under Prefill/Decode, on both roles. It offers only the size equal to the tensor-parallel size of every role, the layouts InferenceX qualified: GB200 TP8 x PP2 aggregated is DCP8 (#4322), TP16 per role disaggregated is DCP16 (#3748, #4322), and GB300 TP8 pools are DCP8 (#4047). Other layouts, such as a TP1 DEP decode pool, show no DCP row and drop the flag.
   - Ascend W4A8 checkpoint (ModelScope): https://www.modelscope.cn/models/Eco-Tech/Kimi-K3-w4a8
   - vLLM Ascend tutorial: https://docs.vllm.ai/projects/ascend/en/v0.23.0/tutorials/models/Kimi-K3.html
