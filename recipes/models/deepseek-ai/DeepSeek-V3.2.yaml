@@ -92,6 +92,27 @@ hardware_overrides: {}
 
 strategy_overrides: {}
 
+troubleshooting:
+  - title: "ptxas fatal: Value 'sm_110a' is not defined for option 'gpu-name'"
+    when: { hardware: [nvidia] }
+    body: |
+      This can occur on CUDA 13.x. Fix by exporting:
+      ```bash
+      export TRITON_PTXAS_PATH=/usr/local/cuda/bin/ptxas
+      export PATH=/usr/local/cuda/bin:$PATH
+      export LD_LIBRARY_PATH=/usr/local/cuda/lib64:${LD_LIBRARY_PATH:-}
+      ```
+  - title: "TP=8 performance on Hopper/Blackwell"
+    when: { hardware: [hopper, blackwell], strategies: [single_node_tp, multi_node_tp] }
+    body: |
+      Avoid `-tp 8` with FlashMLA-Sparse. Due to kernel restrictions, TP=8 yields only 16 heads
+      per rank but is padded to 64, causing overhead. Prefer TP=2 (Hopper) or TP=1 (Blackwell)
+      with DP/EP mode: `vllm serve deepseek-ai/DeepSeek-V3.2 -dp 8 --enable-expert-parallel`.
+  - title: "DeepGEMM warmup too slow"
+    when: { hardware: [nvidia] }
+    body: |
+      Set `VLLM_USE_DEEP_GEMM=0` to disable MoE DeepGEMM and skip the long warmup.
+
 guide: |
   ## Overview
 
@@ -117,18 +138,6 @@ guide: |
 
   ## Client Usage
 
-  Launch the server:
-  ```bash
-  vllm serve deepseek-ai/DeepSeek-V3.2 \
-    --tensor-parallel-size 8 \
-    --trust-remote-code \
-    --disable-flashinfer-autotune \
-    --tokenizer-mode deepseek_v32 \
-    --tool-call-parser deepseek_v32 \
-    --enable-auto-tool-choice \
-    --reasoning-parser deepseek_v3
-  ```
-
   Use the OpenAI Python SDK to interact with the server:
   ```python
   from openai import OpenAI
@@ -151,24 +160,6 @@ guide: |
       extra_body={"chat_template_kwargs": {"thinking": True}},
   )
   ```
-
-  ## Troubleshooting
-
-  **`ptxas fatal: Value 'sm_110a' is not defined for option 'gpu-name'`**
-  This can occur on CUDA 13.x. Fix by exporting:
-  ```bash
-  export TRITON_PTXAS_PATH=/usr/local/cuda/bin/ptxas
-  export PATH=/usr/local/cuda/bin:$PATH
-  export LD_LIBRARY_PATH=/usr/local/cuda/lib64:${LD_LIBRARY_PATH:-}
-  ```
-
-  **TP=8 performance on Hopper/Blackwell**
-  Avoid `-tp 8` with FlashMLA-Sparse. Due to kernel restrictions, TP=8 yields only 16 heads
-  per rank but is padded to 64, causing overhead. Prefer TP=2 (Hopper) or TP=1 (Blackwell)
-  with DP/EP mode: `vllm serve deepseek-ai/DeepSeek-V3.2 -dp 8 --enable-expert-parallel`.
-
-  **DeepGEMM warmup too slow**
-  Set `VLLM_USE_DEEP_GEMM=0` to disable MoE DeepGEMM and skip the long warmup.
 
   ## References
 
