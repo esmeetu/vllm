@@ -427,10 +427,10 @@ strategy_overrides:
         - "32"
         - "--no-disable-hybrid-kv-cache-manager"
 
-# Tuned profiles: the SemiAnalysis InferenceX AgentX lanes, each a delta on
+# Tuned presets: the SemiAnalysis InferenceX AgentX lanes, each a delta on
 # the baseline command for one GPU + strategy, on by default there (Baseline
-# in the builder drops it). Their runbooks render under "Tuned profiles".
-profiles:
+# in the builder drops it). Their runbooks render on the recipe page.
+presets:
   gb200_agentx_agg:
     label: "AgentX aggregated"
     hardware: gb200
@@ -439,7 +439,7 @@ profiles:
     default: true
     description: "TP8 x PP2 + DCP8 across four GB200 trays with the DSpark K4 draft and an embedded Mooncake store."
     source: { label: "InferenceX #3748", href: "https://github.com/SemiAnalysisAI/InferenceX/pull/3748" }
-    # GB200: the InferenceX AgentX aggregated profile (SemiAnalysisAI/InferenceX#3748).
+    # GB200: the InferenceX AgentX aggregated lane (SemiAnalysisAI/InferenceX#3748).
     # A GB200 tray has 4 GPUs, so the strategy's TP-per-node x PP-across-nodes would
     # give TP4 x PP4 on the 16-GPU floor; the lane runs TP8 x PP2 + DCP8 across the
     # four trays instead (same --nnodes 4 rendezvous). Exact-GPU block: layers after
@@ -527,7 +527,7 @@ profiles:
     default: true
     description: "One TP16 + DCP16 prefill pool and one decode pool across four GB200 trays each, served by Dynamo with the DSpark K4 draft."
     source: { label: "InferenceX #4322", href: "https://github.com/SemiAnalysisAI/InferenceX/pull/4322" }
-    # GB200: the InferenceX AgentX 1P1D profile (SemiAnalysisAI/InferenceX#3748),
+    # GB200: the InferenceX AgentX 1P1D lane (SemiAnalysisAI/InferenceX#3748),
     # one TP16 + DCP16 pool per role across four trays with the DSpark K4 draft.
     # Shared serving flags restated here as for GB300 below; role blocks add the
     # per-role memory and batch settings.
@@ -632,7 +632,7 @@ profiles:
 
       Image `vllm/vllm-openai:nightly-e68efc685ab1e6f1eda004ced7157e3ca411da2f` with Dynamo `ffbbaaa6c44370e798687881317535ac17d66a76`, etcd and an embedded RDMA Mooncake store. The lane's request plane is TCP (`DYN_REQUEST_PLANE=tcp`) and it starts no NATS service. Each role is one worker across four trays.
 
-      In the command builder, select GB200, **Prefill/Decode Disaggregation** and the **Dynamo** PD router, and keep the default TP prefill and TP decode pools: they render this TP16 + DCP16 layout with the concurrency-16 settings. The profile already includes the DSpark K4 draft and `--language-model-only`, so leave **Spec decoding** off (the toggle swaps in the generic RedHat K8 draft) and untick **Tool calling** (see the parser note below). The DEP decode pool is not supported on GB200: it renders TP1 with `--decode-context-parallel-size 16`, which vLLM rejects. The NIXL + Mooncake store connector, the Mooncake master, prefill `--kv-events-config` and the frontend's router mode and session affinity below are documented here only.
+      In the command builder, select GB200, **Prefill/Decode Disaggregation** and the **Dynamo** PD router, and keep the default TP prefill and TP decode pools: they render this TP16 + DCP16 layout with the concurrency-16 settings. The preset already includes the DSpark K4 draft and `--language-model-only`, so leave **Spec decoding** off (the toggle swaps in the generic RedHat K8 draft) and untick **Tool calling** (see the parser note below). The DEP decode pool is not supported on GB200: it renders TP1 with `--decode-context-parallel-size 16`, which vLLM rejects. The NIXL + Mooncake store connector, the Mooncake master, prefill `--kv-events-config` and the frontend's router mode and session affinity below are documented here only.
 
       Run each command on all four trays of the role with the same `--master-addr` (the first tray's address), `--nnodes 4`, `--node-rank 0` to `3`, and `--headless` on ranks 1-3. Prefill (`P_GPU`/`P_CAP` and `S` from the table below):
 
@@ -693,7 +693,7 @@ profiles:
     default: true
     description: "TP8 + DCP8 prefill and decode workers across two GB300 trays each, served by Dynamo with the DSpark K4 draft."
     source: { label: "InferenceX #4047", href: "https://github.com/SemiAnalysisAI/InferenceX/pull/4047" }
-    # GB300: the InferenceX AgentX xPyD profile (SemiAnalysisAI/InferenceX#4047),
+    # GB300: the InferenceX AgentX xPyD lane (SemiAnalysisAI/InferenceX#4047),
     # TP8 + DCP8 pools across two trays with the DSpark K4 draft. The pd_cluster
     # Blackwell block above replaces the recipe Blackwell baseline, so the
     # shared serving flags are restated here; role blocks below add the rest.
@@ -800,7 +800,7 @@ profiles:
 
       Prefill workers always use `--max-num-seqs 64`.
 
-      The command builder renders one prefill pool and one decode pool of this profile: select GB300, **Prefill/Decode Disaggregation** and the **Dynamo** PD router, and keep the default TP prefill and TP decode pools. Its decode uses `--max-num-seqs 8` (the 1P2D row). The profile already includes the DSpark K4 draft and `--language-model-only`, so leave **Spec decoding** off: turning it on swaps in the generic `RedHatAI/Kimi-K3-speculator.dspark` K8 draft, which this profile was not qualified with. Untick **Tool calling** as well; see the parser note under Workers. Other pool modes are not supported on GB300: the DEP decode pool renders TP1 with `--decode-context-parallel-size 8`, which vLLM rejects.
+      The command builder renders one prefill pool and one decode pool of this preset: select GB300, **Prefill/Decode Disaggregation** and the **Dynamo** PD router, and keep the default TP prefill and TP decode pools. Its decode uses `--max-num-seqs 8` (the 1P2D row). The preset already includes the DSpark K4 draft and `--language-model-only`, so leave **Spec decoding** off: turning it on swaps in the generic `RedHatAI/Kimi-K3-speculator.dspark` K8 draft, which this preset was not qualified with. Untick **Tool calling** as well; see the parser note under Workers. Other pool modes are not supported on GB300: the DEP decode pool renders TP1 with `--decode-context-parallel-size 8`, which vLLM rejects.
 
       Documented here only: worker counts beyond one pool per role, the Mooncake store connector (the builder's Mooncake option renders a plain `MooncakeStoreConnector` without the qualified NIXL MultiConnector, recompute policy and load options), the Mooncake services, prefill `--kv-events-config`, and the frontend's router mode and session affinity (the builder renders round-robin).
 
@@ -1058,11 +1058,11 @@ profiles:
 # (hardware / strategy / variant / feature); see SCHEMA.md.
 notes:
   - title: "Cross-node communication"
-    when: { strategy: [multi_node_tep, multi_node_dep, pd_cluster] }
+    when: { strategies: [multi_node_tep, multi_node_dep, pd_cluster] }
     body: |
       Use `--all2all-backend deepep_v2` for RDMA and `--all2all-backend flashinfer_nvlink_one_sided` for NVLink.
   - title: "MoE backend"
-    when: { hardware: [gb200, gb300], strategy: [multi_node_dep] }
+    when: { hardware: [gb200, gb300], strategies: [multi_node_dep] }
     body: |
       Recommend to use `deep_gemm_mega_moe` for DEP deployments with cross-node NVLink e.g. GB200 and GB300. Note that DeepGEMM MegaMoE is not compatible with cross-node RDMA.
   - title: "MNNVL environments"
@@ -1074,7 +1074,7 @@ notes:
     body: |
       K3 is a hybrid model: its MLA attention layers and KDA (Mamba-like) layers form two KV-cache groups under the hybrid KV-cache manager. With prefix caching on, vLLM pads the attention block size up to match the Mamba state page, so both groups resolve to one (large) block size and the default prefix-cache hit boundary lands on that block — very coarse. The Blackwell profile sets `--prefix-match-unit 128`: the inflation formula always yields a multiple of 128, so 128 divides whatever block size results, and it aligns with the MLA kernel's native block boundary, giving finer prefix-hit granularity. The value is only effective when prefix caching (or a KV connector) is active; it is a no-op otherwise, and it is safe under all tensor-parallel layouts.
   - title: "RDMA KV transfer"
-    when: { strategy: [pd_cluster] }
+    when: { strategies: [pd_cluster] }
     body: |
       If RDMA is enabled, set `UCX_TLS="rc,cuda_copy"` to make sure KV Cache transfer goes through RDMA.
   - title: "AITER SiTUv2 MoE path (MI355X / MI350X)"
@@ -1083,11 +1083,11 @@ notes:
       `VLLM_ROCM_USE_AITER_MOE_SITUV2=1` (set above) enables AITER's SiTUv2 a4w4 FlyDSL MoE path on builds that carry vllm-project/vllm#53940 (ROCm nightlies since 2026-09-16). v0.30.0 predates it: there the variable is ignored and the MoE runs the default a16w4 path. Unset it or set `0` for the default a16w4 path. On builds with #53940, `VLLM_ROCM_USE_AITER_MOE_SITUV2_A8W4` is a deprecated alias for the same a4w4 path and vLLM removes `AITER_SITUV2_A8W4` at startup while the toggle is on; on v0.30.0 and older, `VLLM_ROCM_USE_AITER_MOE_SITUV2_A8W4=1` selects the a8w4 path instead. Do not set `AITER_SITUV2_A8W4=1` by itself: vLLM does not derive its MoE weight layout from that AITER flag (vllm-project/vllm#53954 is open), so the two can disagree and corrupt output without an error.
 troubleshooting:
   - title: "Tool call in a format the parser doesn't expect"
-    when: { feature: [tool_calling] }
+    when: { features: [tool_calling] }
     body: |
       K3 occasionally emit a tool-call format its own parser doesn't expect. Suggest to run do schema validation and retry.
   - title: "NCCL error: unhandled system error (mlx5 dmabuf registration)"
-    when: { hardware: [nvidia], strategy: [multi_node_tp, multi_node_tep, multi_node_tp_pp, multi_node_dep, multi_node_tp_dp, pd_cluster] }
+    when: { hardware: [nvidia], strategies: [multi_node_tp, multi_node_tep, multi_node_tp_pp, multi_node_dep, multi_node_tp_dp, pd_cluster] }
     body: |
       If engine init fails with "NCCL error: unhandled system error" and the log shows `mlx5dv_reg_dmabuf_mr` errno 524, the kernel/driver lacks mlx5 dmabuf support (NCCL 2.28 registers dmabuf by default). Set `NCCL_DMABUF_ENABLE=0` to fall back to `nvidia_peermem` (must be loaded on the nodes) — still GPUDirect RDMA.
 
@@ -1101,7 +1101,7 @@ guide: |
   - **vLLM:** Use the vllm/vllm-openai:kimi-k3 docker
   - **CUDA:** The kimi-k3 image ships as a CUDA 13 (cu130) build only — there is no -cu129 tag, and the K3-enabled wheels are not on the cu129 nightly index. The host needs an r580+ NVIDIA driver; on a CUDA 12.9 (r575) host, upgrade the driver or build vLLM from the K3 branch against cu129 PyTorch yourself.
   - **Hardware:** At least 8x GB300. Multi-node for real production traffic.
-  - **ROCm:** At least 8x MI355X/MI350X. On MI355X the command builder uses the ROCm 10.0 nightly image `vllm/vllm-openai-rocm:nightly-rocm100`; the day-0 `vllm/vllm-openai-rocm:kimi-k3` image predates the DSpark and MoE fixes that path needs (see [AMD MI355X: InferenceX AgentX alignment](#amd-mi355x-inferencex-agentx-alignment)).
+  - **ROCm:** At least 8x MI355X/MI350X. On MI355X the command builder uses the ROCm 10.0 nightly image `vllm/vllm-openai-rocm:nightly-rocm100`; the day-0 `vllm/vllm-openai-rocm:kimi-k3` image predates the DSpark and MoE fixes that path needs (see the [MI355X AgentX preset](#preset-mi355x_agentx)).
 
   ## Client Usage
 

@@ -103,7 +103,7 @@ troubleshooting:
       export LD_LIBRARY_PATH=/usr/local/cuda/lib64:${LD_LIBRARY_PATH:-}
       ```
   - title: "TP=8 performance on Hopper/Blackwell"
-    when: { hardware: [hopper, blackwell], strategy: [single_node_tp, multi_node_tp] }
+    when: { hardware: [hopper, blackwell], strategies: [single_node_tp, multi_node_tp] }
     body: |
       Avoid `-tp 8` with FlashMLA-Sparse. Due to kernel restrictions, TP=8 yields only 16 heads
       per rank but is padded to 64, causing overhead. Prefer TP=2 (Hopper) or TP=1 (Blackwell)
